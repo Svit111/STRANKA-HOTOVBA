@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Panel - Správa Databázy</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f2f2;
+            margin: 0;
+            padding: 30px;
+        }
+        .Obsah {
+            background: white;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px #bbb;
+        }
+        .form-skupina {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input {
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #125aa0;
+        }
+        .btn-zeleny {
+            background: #388e3c;
+        }
+        .btn-zeleny:hover {
+            background: #2e7d32;
+        }
+        .sprava {
+            margin-top: 15px;
+            font-weight: bold;
+            color: green;
+            text-align: center;
+        }
+        .odkaz {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: #1976d2;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        hr {
+            margin: 25px 0;
+            border: 0;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="Obsah">
+        <h2>⚙️ Admin Panel - Doplnenie skladu</h2>
+        
+        <div class="form-skupina">
+            <label for="produktSelect">Vyberte produkt:</label>
+            <select id="produktSelect"></select>
+        </div>
+
+        <div class="form-skupina">
+            <label for="pocetKusov">Počet kusov na pridanie:</label>
+            <input type="number" id="pocetKusov" min="1" value="5">
+        </div>
+
+        <button onclick="doplnitSklad()">Doplniť zásoby</button>
+
+        <hr>
+
+        <h2>➕ Pridať nový produkt do databázy</h2>
+
+        <div class="form-skupina">
+            <label for="novyNazov">Názov produktu:</label>
+            <input type="text" id="novyNazov" placeholder="Napr. pomaranc">
+        </div>
+
+        <div class="form-skupina">
+            <label for="novaKategoria">Kategória:</label>
+            <select id="novaKategoria">
+                <option value="ovocie">ovocie</option>
+                <option value="zelenina">zelenina</option>
+                <option value="zviera">zviera</option>
+                <option value="ine">ine</option>
+            </select>
+        </div>
+
+        <div class="form-skupina">
+            <label for="novaCena">Cena (€):</label>
+            <input type="number" id="novaCena" step="0.1" min="0.1" value="1.5">
+        </div>
+
+        <div class="form-skupina">
+            <label for="novySklad">Počiatočný sklad (ks):</label>
+            <input type="number" id="novySklad" min="1" value="10">
+        </div>
+
+        <button class="btn-zeleny" onclick="pridatNovyProdukt()">Uložiť produkt do DB</button>
+
+        <div id="adminSprava" class="sprava"></div>
+        
+        <a class="odkaz" href="/">🏠 Späť do hlavného obchodu</a>
+    </div>
+
+    <script>
+        nacitatProduktyDoSelectu();
+
+        async function nacitatProduktyDoSelectu() {
+            const response = await fetch("/api/products");
+            const produkty = await response.json();
+            const select = document.getElementById("produktSelect");
+            
+            select.innerHTML = "";
+            for (const nazov in produkty) {
+                const opt = document.createElement('option');
+                opt.value = nazov;
+                opt.innerHTML = `${produkty[nazov].nazov} (Na sklade: ${produkty[nazov].sklad} ks - ${produkty[nazov].cena.toFixed(2)} €)`;
+                select.appendChild(opt);
+            }
+        }
+
+        async function doplnitSklad() {
+            const nazov = document.getElementById("produktSelect").value;
+            const pocet = parseInt(document.getElementById("pocetKusov").value);
+
+            if (isNaN(pocet) || pocet <= 0) {
+                alert("Zadajte platný počet kusov!");
+                return;
+            }
+
+            const response = await fetch("/api/admin/restock", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nazov: nazov, pocet: pocet })
+            });
+
+            const data = await response.json();
+            document.getElementById("adminSprava").innerText = data.message;
+            nacitatProduktyDoSelectu();
+        }
+
+        async function pridatNovyProdukt() {
+            const nazov = document.getElementById("novyNazov").value;
+            const kategoria = document.getElementById("novaKategoria").value;
+            const cena = parseFloat(document.getElementById("novaCena").value);
+            const sklad = parseInt(document.getElementById("novySklad").value);
+
+            if (!nazov || isNaN(cena) || isNaN(sklad)) {
+                alert("Vyplňte všetky údaje správne!");
+                return;
+            }
+
+            const response = await fetch("/api/admin/add_product", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nazov, cena, kategoria, sklad })
+            });
+
+            const data = await response.json();
+            const spravaEl = document.getElementById("adminSprava");
+            spravaEl.style.color = data.success ? "green" : "red";
+            spravaEl.innerText = data.message;
+
+            if (data.success) {
+                document.getElementById("novyNazov").value = "";
+                nacitatProduktyDoSelectu();
+            }
+        }
+    </script>
+</body>
+</html>
