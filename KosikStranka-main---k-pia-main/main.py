@@ -65,6 +65,7 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM produkty")
     vysledok = cursor.fetchone()
     
+    # OPRAVA: Pridaný index [0] pre správne prečítanie čísla z tuple (0,)
     if vysledok is None or vysledok[0] == 0:
         uvodne_produkty = [
             ("jablko", 1.0, "ovocie", 5),
@@ -75,7 +76,6 @@ def init_db():
             ("pes", 10.0, "zviera", 1),
             ("macka", 20.0, "zviera", 2)
         ]
-        # pg8000 používa štandardné zástupné znaky %s
         cursor.executemany(
             "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             uvodne_produkty
@@ -83,6 +83,7 @@ def init_db():
     conn.commit()
     cursor.close()
     conn.close()
+
 
 if DATABASE_URL:
     init_db()
