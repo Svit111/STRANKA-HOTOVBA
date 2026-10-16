@@ -14,8 +14,6 @@ def get_db_connection():
     if not DATABASE_URL:
         raise RuntimeError("Chýba premenná prostredia DATABASE_URL!")
     
-    # pg8000 vyžaduje rozobratie URL na jednotlivé parametre
-    # Očakávaný formát: postgres://user:password@host:port/dbname
     try:
         url = DATABASE_URL.replace("postgresql://", "postgres://")
         parts = url.split("://")[1]
@@ -35,7 +33,6 @@ def get_db_connection():
     except Exception as e:
         raise RuntimeError(f"Chyba pri parsovaní DATABASE_URL: {e}")
 
-    # Render PostgreSQL vyžaduje SSL pripojenie
     import ssl
     ssl_context = ssl.create_default_context()
     ssl_context.check_hostname = False
@@ -65,7 +62,7 @@ def init_db():
     cursor.execute("SELECT COUNT(*) FROM produkty")
     vysledok = cursor.fetchone()
     
-    # OPRAVA: Pridaný index [0] pre správne prečítanie čísla z tuple (0,)
+    # OPRAVA: pg8000 vracia list, preto pristupujeme cez index [0]
     if vysledok is None or vysledok[0] == 0:
         uvodne_produkty = [
             ("jablko", 1.0, "ovocie", 5),
@@ -83,7 +80,6 @@ def init_db():
     conn.commit()
     cursor.close()
     conn.close()
-
 
 if DATABASE_URL:
     init_db()
@@ -138,6 +134,7 @@ def pridat_do_kosika(data: ProduktRequest):
         conn.close()
         return {"success": False, "message": "Produkt neexistuje."}
 
+    # OPRAVA: riadok je list, musíme vytiahnuť nultý index
     sklad = riadok[0]
     if sklad <= 0:
         cursor.close()
@@ -239,11 +236,9 @@ def pridat_novy_produkt(data: NovyProduktRequest):
         return {"success": True, "message": f"Nový produkt '{nazov}' bol pridaný do databázy!"}
     except DatabaseError as e:
         conn.rollback()
-        # Postgres kód 23505 značí unique_violation (duplicitný názov produktu)
         if '23505' in str(e):
             return {"success": False, "message": "Produkt s týmto názvom už v databáze existuje."}
         return {"success": False, "message": f"Chyba databázy: {e}"}
-
     finally:
         cursor.close()
         conn.close()
