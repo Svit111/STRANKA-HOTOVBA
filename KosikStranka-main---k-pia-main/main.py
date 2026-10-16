@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import pg8000
-from pg8000.exceptions import IntegrityError
+from pg8000.exceptions import DatabaseError
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
