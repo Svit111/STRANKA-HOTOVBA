@@ -236,9 +236,13 @@ def pridat_novy_produkt(data: NovyProduktRequest):
         conn.commit()
         posledna_zmena = {"produkt": nazov, "verzia": posledna_zmena["verzia"] + 1}
         return {"success": True, "message": f"Nový produkt '{nazov}' bol pridaný do databázy!"}
-    except IntegrityError:
+    except DatabaseError as e:
         conn.rollback()
-        return {"success": False, "message": "Produkt s týmto názvom už v databáze existuje."}
+        # Postgres kód 23505 značí unique_violation (duplicitný názov produktu)
+        if '23505' in str(e):
+            return {"success": False, "message": "Produkt s týmto názvom už v databáze existuje."}
+        return {"success": False, "message": f"Chyba databázy: {e}"}
+
     finally:
         cursor.close()
         conn.close()
