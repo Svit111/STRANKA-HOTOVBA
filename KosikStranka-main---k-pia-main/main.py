@@ -2,27 +2,57 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-import psycopg as psycopg2
-from psycopg2.extras import RealDictCursor
+import pg8000
+from pg8000.exceptions import IntegrityError
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Načítanie adresy databázy z Render prostredia (Internal alebo External URL)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Pomocná funkcia na vytvorenie pripojenia k Postgresu
 def get_db_connection():
     if not DATABASE_URL:
         raise RuntimeError("Chýba premenná prostredia DATABASE_URL!")
-    # Používame sslmode='require', pretože Render Postgres vyžaduje šifrované pripojenie
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+    
+    # pg8000 vyžaduje rozobratie URL na jednotlivé parametre
+    # Očakávaný formát: postgres://user:password@host:port/dbname
+    try:
+        url = DATABASE_URL.replace("postgresql://", "postgres://")
+        parts = url.split("://")[1]
+        credentials, rest = parts.split("@")
+        user, password = credentials.split(":")
+        host_port, dbname = rest.split("/")
+        
+        if ":" in host_port:
+            host, port = host_port.split(":")
+            port = int(port)
+        else:
+            host = host_port
+            port = 5432
+            
+        if "?" in dbname:
+            dbname = dbname.split("?")[0]
+    except Exception as e:
+        raise RuntimeError(f"Chyba pri parsovaní DATABASE_URL: {e}")
 
-# Inicializácia databázy v PostgreSQL
+    # Render PostgreSQL vyžaduje SSL pripojenie
+    import ssl
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+
+    return pg8000.connect(
+        user=user,
+        password=password,
+        host=host,
+        port=port,
+        database=dbname,
+        ssl_context=ssl_context
+    )
+
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # SERIAL a TEXT PRIMARY KEY sú v Postgres plne podporované
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS produkty (
             nazov TEXT PRIMARY KEY,
@@ -32,11 +62,9 @@ def init_db():
         )
     """)
     
-    # Skontrolujeme, či je databáza prázdna
     cursor.execute("SELECT COUNT(*) FROM produkty")
     vysledok = cursor.fetchone()
     
-    # Postgres vracia tuple, napr. (0,), preto musíme použiť [0]
     if vysledok is None or vysledok[0] == 0:
         uvodne_produkty = [
             ("jablko", 1.0, "ovocie", 5),
@@ -47,16 +75,15 @@ def init_db():
             ("pes", 10.0, "zviera", 1),
             ("macka", 20.0, "zviera", 2)
         ]
+        # pg8000 používa štandardné zástupné znaky %s
         cursor.executemany(
             "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             uvodne_produkty
         )
-
     conn.commit()
     cursor.close()
     conn.close()
 
-# Spustíme vytvorenie DB pri štarte (ak už tabuľka existuje, nič sa neprepíše)
 if DATABASE_URL:
     init_db()
 
@@ -102,7 +129,6 @@ def pridat_do_kosika(data: ProduktRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Zmena zástupného znaku na %s
     cursor.execute("SELECT sklad FROM produkty WHERE nazov = %s", (nazov,))
     riadok = cursor.fetchone()
 
@@ -117,7 +143,6 @@ def pridat_do_kosika(data: ProduktRequest):
         conn.close()
         return {"success": False, "message": "Produkt je vypredaný."}
 
-    # Úprava UPDATE príkazu so znakom %s
     cursor.execute("UPDATE produkty SET sklad = sklad - 1 WHERE nazov = %s", (nazov,))
     conn.commit()
     cursor.close()
@@ -204,7 +229,6 @@ def pridat_novy_produkt(data: NovyProduktRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        # Prepísané na %s a chytanie Postgres výnimky (psycopg2.IntegrityError)
         cursor.execute(
             "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             (nazov, data.cena, data.kategoria, data.sklad)
@@ -212,8 +236,8 @@ def pridat_novy_produkt(data: NovyProduktRequest):
         conn.commit()
         posledna_zmena = {"produkt": nazov, "verzia": posledna_zmena["verzia"] + 1}
         return {"success": True, "message": f"Nový produkt '{nazov}' bol pridaný do databázy!"}
-    except psycopg2.IntegrityError:
-        conn.rollback() # Pri Postgrese je nutné po neúspešnej operácii rollbacknúť transakciu
+    except IntegrityError:
+        conn.rollback()
         return {"success": False, "message": "Produkt s týmto názvom už v databáze existuje."}
     finally:
         cursor.close()
