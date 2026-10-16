@@ -50,6 +50,11 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # 1. ODSTRÁNIME STARÚ PRÁZDNU TABUĽKU (aby sme resetovali stav)
+    cursor.execute("DROP TABLE IF EXISTS produkty")
+    
+    # 2. VYTVORÍME JU NANOVO
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS produkty (
             nazov TEXT PRIMARY KEY,
@@ -59,27 +64,26 @@ def init_db():
         )
     """)
     
-    cursor.execute("SELECT COUNT(*) FROM produkty")
-    vysledok = cursor.fetchone()
+    # 3. ROVNO VLOŽÍME ÚVODNÉ PRODUKTY BEZ KONTROLY POČTU
+    uvodne_produkty = [
+        ("jablko", 1.0, "ovocie", 5),
+        ("banan", 2.0, "ovocie", 3),
+        ("hruska", 3.0, "ovocie", 4),
+        ("rajcina", 2.0, "zelenina", 2),
+        ("melon", 3.0, "zelenina", 1),
+        ("pes", 10.0, "zviera", 1),
+        ("macka", 20.0, "zviera", 2)
+    ]
     
-    # OPRAVA: pg8000 vracia list, preto pristupujeme cez index [0]
-    if vysledok is None or vysledok[0] == 0:
-        uvodne_produkty = [
-            ("jablko", 1.0, "ovocie", 5),
-            ("banan", 2.0, "ovocie", 3),
-            ("hruska", 3.0, "ovocie", 4),
-            ("rajcina", 2.0, "zelenina", 2),
-            ("melon", 3.0, "zelenina", 1),
-            ("pes", 10.0, "zviera", 1),
-            ("macka", 20.0, "zviera", 2)
-        ]
-        cursor.executemany(
-            "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
-            uvodne_produkty
-        )
+    cursor.executemany(
+        "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
+        uvodne_produkty
+    )
+    
     conn.commit()
     cursor.close()
     conn.close()
+
 
 if DATABASE_URL:
     init_db()
