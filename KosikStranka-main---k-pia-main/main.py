@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-import psycopg2
+import psycopg as psycopg2
 from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
