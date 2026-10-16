@@ -34,7 +34,10 @@ def init_db():
     
     # Skontrolujeme, či je databáza prázdna
     cursor.execute("SELECT COUNT(*) FROM produkty")
-    if cursor.fetchone()[0] == 0:
+    vysledok = cursor.fetchone()
+    
+    # Postgres vracia tuple, napr. (0,), preto musíme použiť [0]
+    if vysledok is None or vysledok[0] == 0:
         uvodne_produkty = [
             ("jablko", 1.0, "ovocie", 5),
             ("banan", 2.0, "ovocie", 3),
@@ -44,11 +47,11 @@ def init_db():
             ("pes", 10.0, "zviera", 1),
             ("macka", 20.0, "zviera", 2)
         ]
-        # Pozor: SQLite používa '?', PostgreSQL vyžaduje '%s'
         cursor.executemany(
             "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             uvodne_produkty
         )
+
     conn.commit()
     cursor.close()
     conn.close()
