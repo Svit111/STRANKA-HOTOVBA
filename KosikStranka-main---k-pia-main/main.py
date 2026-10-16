@@ -1,17 +1,28 @@
-import sqlite3
+import os
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-DB_NAME = "obchod.db"
+# Načítanie adresy databázy z Render prostredia (Internal alebo External URL)
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Inicializácia databázy a naplnenie počiatočnými produktmi
+# Pomocná funkcia na vytvorenie pripojenia k Postgresu
+def get_db_connection():
+    if not DATABASE_URL:
+        raise RuntimeError("Chýba premenná prostredia DATABASE_URL!")
+    # Používame sslmode='require', pretože Render Postgres vyžaduje šifrované pripojenie
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+# Inicializácia databázy v PostgreSQL
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
+    # SERIAL a TEXT PRIMARY KEY sú v Postgres plne podporované
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS produkty (
             nazov TEXT PRIMARY KEY,
@@ -33,24 +44,28 @@ def init_db():
             ("pes", 10.0, "zviera", 1),
             ("macka", 20.0, "zviera", 2)
         ]
+        # Pozor: SQLite používa '?', PostgreSQL vyžaduje '%s'
         cursor.executemany(
-            "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (?, ?, ?, ?)",
+            "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             uvodne_produkty
         )
     conn.commit()
+    cursor.close()
     conn.close()
 
-# Spustíme vytvorenie DB pri štarte
-init_db()
+# Spustíme vytvorenie DB pri štarte (ak už tabuľka existuje, nič sa neprepíše)
+if DATABASE_URL:
+    init_db()
 
 kosicek = []
 posledna_zmena = {"produkt": None, "verzia": 0}
 
 def vsetky_produkty():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT nazov, cena, kategoria, sklad FROM produkty")
     riadky = cursor.fetchall()
+    cursor.close()
     conn.close()
 
     produkty = {}
@@ -63,12 +78,10 @@ def vsetky_produkty():
         }
     return produkty
 
-# Hlavná zákaznícka stránka
 @app.get("/")
 def domov(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
 
-# Druhá, samostatná admin stránka
 @app.get("/admin")
 def admin_stranka(request: Request):
     return templates.TemplateResponse(request=request, name="admin.html")
@@ -83,24 +96,28 @@ class ProduktRequest(BaseModel):
 @app.post("/api/cart/add")
 def pridat_do_kosika(data: ProduktRequest):
     nazov = data.nazov
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT sklad FROM produkty WHERE nazov = ?", (nazov,))
+    # Zmena zástupného znaku na %s
+    cursor.execute("SELECT sklad FROM produkty WHERE nazov = %s", (nazov,))
     riadok = cursor.fetchone()
 
     if riadok is None:
+        cursor.close()
         conn.close()
         return {"success": False, "message": "Produkt neexistuje."}
 
     sklad = riadok[0]
     if sklad <= 0:
+        cursor.close()
         conn.close()
         return {"success": False, "message": "Produkt je vypredaný."}
 
-    # Odpočítanie zo skladu v databáze
-    cursor.execute("UPDATE produkty SET sklad = sklad - 1 WHERE nazov = ?", (nazov,))
+    # Úprava UPDATE príkazu so znakom %s
+    cursor.execute("UPDATE produkty SET sklad = sklad - 1 WHERE nazov = %s", (nazov,))
     conn.commit()
+    cursor.close()
     conn.close()
 
     kosicek.append(nazov)
@@ -141,7 +158,6 @@ def pouzit_kupon(data: KuponRequest):
     else:
         return {"success": False, "message": "Kupón neexistuje.", "cena": cena}
 
-# API pre dopĺňanie skladu v DB
 class RestockRequest(BaseModel):
     nazov: str
     pocet: int
@@ -149,13 +165,14 @@ class RestockRequest(BaseModel):
 @app.post("/api/admin/restock")
 def doplnit_sklad(data: RestockRequest):
     global posledna_zmena
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT sklad FROM produkty WHERE nazov = ?", (data.nazov,))
+    cursor.execute("SELECT sklad FROM produkty WHERE nazov = %s", (data.nazov,))
     if cursor.fetchone() is not None:
-        cursor.execute("UPDATE produkty SET sklad = sklad + ? WHERE nazov = ?", (data.pocet, data.nazov))
+        cursor.execute("UPDATE produkty SET sklad = sklad + %s WHERE nazov = %s", (data.pocet, data.nazov))
         conn.commit()
+        cursor.close()
         conn.close()
 
         posledna_zmena = {"produkt": data.nazov, "verzia": posledna_zmena["verzia"] + 1}
@@ -164,10 +181,10 @@ def doplnit_sklad(data: RestockRequest):
             "message": f"Sklad pre {data.nazov} úspešne navýšený o {data.pocet} ks."
         }
     
+    cursor.close()
     conn.close()
     return {"success": False, "message": "Produkt sa nenašiel."}
 
-# API pre pridanie úplne nového produktu do DB
 class NovyProduktRequest(BaseModel):
     nazov: str
     cena: float
@@ -181,22 +198,24 @@ def pridat_novy_produkt(data: NovyProduktRequest):
     if not nazov:
         return {"success": False, "message": "Názov produktu nemôže byť prázdny."}
 
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        # Prepísané na %s a chytanie Postgres výnimky (psycopg2.IntegrityError)
         cursor.execute(
-            "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (?, ?, ?, ?)",
+            "INSERT INTO produkty (nazov, cena, kategoria, sklad) VALUES (%s, %s, %s, %s)",
             (nazov, data.cena, data.kategoria, data.sklad)
         )
         conn.commit()
         posledna_zmena = {"produkt": nazov, "verzia": posledna_zmena["verzia"] + 1}
         return {"success": True, "message": f"Nový produkt '{nazov}' bol pridaný do databázy!"}
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
+        conn.rollback() # Pri Postgrese je nutné po neúspešnej operácii rollbacknúť transakciu
         return {"success": False, "message": "Produkt s týmto názvom už v databáze existuje."}
     finally:
+        cursor.close()
         conn.close()
 
-# Endpoint, ktorý hlavná stránka neustále kontroluje
 @app.get("/api/updates")
 def skontrolovat_aktualizacie():
     return posledna_zmena
